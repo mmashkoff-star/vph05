@@ -29,7 +29,8 @@ services:
       - "5000:5000"
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - ./frontend:/usr/share/nginx/html:ro
+      # После cd frontend && npm run build Nginx отдаёт свежий dist.
+      - ./frontend/dist:/usr/share/nginx/html:ro
     networks:
       - edge
       - app
@@ -37,7 +38,7 @@ services:
     depends_on:
       registry:
         condition: service_started
-      pgadmin:
+      backend:
         condition: service_healthy
     # После reboot Docker поднимает контейнеры параллельно, depends_on не действует.
     # Ждём pgAdmin, чтобы /pgadmin/ не отдавал 502 в первые минуты.
@@ -45,13 +46,17 @@ services:
       - /bin/sh
       - -c
       - |
-        i=0
-        while [ $$i -lt 60 ]; do
-          wget -qO- http://pgadmin:8080/misc/ping >/dev/null 2>&1 && break
-          i=$$((i+1))
-          sleep 2
-        done
+        wait_url() {
+          i=0
+          while [ $$i -lt 60 ]; do
+            wget -qO- "$$1" >/dev/null 2>&1 && return 0
+            i=$$((i+1))
+            sleep 2
+          done
+        }
+        wait_url http://backend:8000/api/health
         exec /docker-entrypoint.sh nginx -g 'daemon off;'
+    mem_limit: 48m
     security_opt:
       - no-new-privileges:true
     logging: *default-logging
@@ -73,7 +78,8 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - data
-    shm_size: 128mb
+    mem_limit: 128m
+    shm_size: 32mb
     security_opt:
       - no-new-privileges:true
     logging: *default-logging
@@ -114,6 +120,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    mem_limit: 160m
     security_opt:
       - no-new-privileges:true
     logging: *default-logging
@@ -140,6 +147,7 @@ services:
     networks:
       - registry_net
     # Порт 5000 наружу отдаёт Nginx, сам registry с хоста не слушает.
+    mem_limit: 64m
     security_opt:
       - no-new-privileges:true
     logging: *default-logging
@@ -159,29 +167,44 @@ services:
       WATCHTOWER_INCLUDE_RESTARTING: "true"
       WATCHTOWER_TIMEOUT: "30s"
       DOCKER_API_VERSION: "1.44"
+    mem_limit: 32m
     logging: *default-logging
 
-  # backend:
-  #   image: 127.0.0.1:5000/deluxe-auto/backend:latest
-  #   container_name: deluxe_backend
-  #   restart: unless-stopped
-  #   env_file: .env
-  #   environment:
-  #     # Если в пароле есть $, в URL его нужно писать как %24
-  #     DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-  #   networks:
-  #     - app
-  #     - data
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #   expose:
-  #     - "8000"
-  #   labels:
-  #     com.centurylinklabs.watchtower.enable: "true"
-  #   security_opt:
-  #     - no-new-privileges:true
-  #   logging: *default-logging
+  backend:
+    build:
+      context: ./backend
+    image: 127.0.0.1:5000/deluxe-auto/backend:latest
+    container_name: deluxe_backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      ENABLE_DOCS: "true"
+    networks:
+      - app
+      - data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose:
+      - "8000"
+    mem_limit: 96m
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
 networks:
   edge:

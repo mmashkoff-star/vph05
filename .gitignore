@@ -4,3 +4,7 @@ registry/docker-config.json
 nginx/certs/
 *.key
 *.crt
+__pycache__/
+*.pyc
+.venv/
+frontend/node_modules/

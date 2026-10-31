@@ -35,17 +35,14 @@ if command -v docker >/dev/null 2>&1 && timeout 20 docker info >/dev/null 2>&1; 
   timeout 30 docker builder prune -f >/dev/null 2>&1 || true
 fi
 
-if [[ "${pct}" -ge 80 ]]; then
-  docker system prune -f >/dev/null 2>&1 || true
-  timeout 30 docker exec deluxe_registry /bin/registry garbage-collect /etc/docker/registry/config.yml >/dev/null 2>&1 || true
-  log "level80 prune+registry-gc use=$(df_pct)%"
-fi
-
+# На 6.9G диск почти всегда ≥80%. Частый docker system prune вешает daemon и рвёт SSH/Cursor.
 if [[ "${pct}" -ge 90 ]]; then
+  timeout 30 docker system prune -f >/dev/null 2>&1 || true
+  timeout 20 docker exec deluxe_registry /bin/registry garbage-collect /etc/docker/registry/config.yml >/dev/null 2>&1 || true
   journalctl --vacuum-size=20M >/dev/null 2>&1 || true
   rm -rf /var/lib/apt/lists/* >/dev/null 2>&1 || true
   find /var/log -xdev -type f \( -name '*.gz' -o -name '*.1' -o -name '*.old' \) -delete >/dev/null 2>&1 || true
-  log "level90 vacuum use=$(df_pct)%"
+  log "level90 cleanup use=$(df_pct)%"
 fi
 
 log "done use=$(df_pct)% avail=$(df_avail_mb)MB"
